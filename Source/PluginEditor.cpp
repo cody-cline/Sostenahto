@@ -26,7 +26,7 @@ SustainPedalAudioProcessorEditor::SustainPedalAudioProcessorEditor(SustainPedalA
     startTimerHz(30);
 
     addAndMakeVisible(infoLabel);
-    infoLabel.setBounds(10, 446, 180, 214);
+    infoLabel.setBounds(10, 474, 180, 186);
     infoLabel.setFont(Font(14));
     infoLabel.setColour(Label::ColourIds::backgroundColourId, Colour(0xFF404040));
     infoLabel.setJustificationType(Justification::centredLeft);
@@ -79,6 +79,12 @@ SustainPedalAudioProcessorEditor::SustainPedalAudioProcessorEditor(SustainPedalA
     autoCatchToggle->setTopLeftPosition(46, 412);
     autoCatchAttachment.reset(new ButtonAttachment(vts, "autoCatch", *autoCatchToggle));
 
+    latchToggle = new CustomToggleButton("Latch", infoLabel, "When enabled, press the pedal, play your notes, then let go: everything keeps ringing. The next press clears it and starts a new set (a quick tap with no notes just clears).\n\nWhen disabled, it works like a piano: letting go fades the sound out.");
+    addAndMakeVisible(latchToggle);
+    latchToggle->setClickingTogglesState(true);
+    latchToggle->setTopLeftPosition(46, 440);
+    latchAttachment.reset(new ButtonAttachment(vts, "latch", *latchToggle));
+
     ss = new DonateSplashScreen(audioProcessor);
     if (!audioProcessor.isReady()) addAndMakeVisible(ss);
 
@@ -97,6 +103,7 @@ SustainPedalAudioProcessorEditor::~SustainPedalAudioProcessorEditor()
     holdAttachment.reset();
     forcePeriodAttachment.reset();
     autoCatchAttachment.reset();
+    latchAttachment.reset();
     delete maxLayersDial;
     delete riseDial;
     delete tailDial;
@@ -106,6 +113,7 @@ SustainPedalAudioProcessorEditor::~SustainPedalAudioProcessorEditor()
     delete pedalWidget;
     delete forcePeriodToggle;
     delete autoCatchToggle;
+    delete latchToggle;
     if (!audioProcessor.isReady()) delete ss;
 }
 

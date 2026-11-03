@@ -74,6 +74,9 @@ public:
     bool isPedalDown() const { return pedalDown.load() || *pedalParam > 0.5f; }
     int getActiveLayerCount() const { return activeLayerCount.load(); }
 
+    void setLatch(bool val) { *latch = val; }
+    bool getLatch() { return *latch > 0.5f; }
+
     void setAutoCatch(bool val) { *autoCatch = val; }
     bool getAutoCatch() { return *autoCatch > 0.5f; }
 
@@ -124,6 +127,7 @@ private:
     // Audio-thread-only helpers.
     void handlePedalChange(bool down);
     void catchLayer();
+    void clearLayers();
     bool tailIsAudible() const;
 
     TransientDetector* td = nullptr;
@@ -131,7 +135,7 @@ private:
     std::vector<float> tailSignal, sample;
     std::vector<SustainData*> layers;
     std::vector<SustainData*> fadingOut;
-    std::vector<std::future<std::vector<float>>> generatedSamples;
+    std::vector<std::future<std::vector<float>>> generatedSamples, discardedSamples;
 
     bool ready = false,
         gettingPhrase = false,
@@ -160,7 +164,8 @@ private:
         * forcePeriod,
         * autoCatch,
         * settle,
-        * pedalParam;
+        * pedalParam,
+        * latch;
 
     std::string licenseKey = "";
 

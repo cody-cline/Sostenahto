@@ -30,9 +30,13 @@ struct Scenario {
     const char* name = "";
     std::vector<Note> notes;
     bool autoCatch = true;
+    bool latch = false;
     bool vibrato = false;
     std::vector<double> taps; // empty: hold the pedal from holdFrom. Otherwise tap at each time, then hold.
     double holdFrom = 0.2;
+    std::vector<std::pair<double, double>> holds; // if set: pedal down only during these (start, end) spans
+    std::vector<Note> absent; // notes that were played but must NOT be sounding while measuring
+    int expectedLayers = -1;  // most layers active at once (default: number of notes)
     double total = 4.5, measureFrom = 3.0, measureTo = 4.3;
 };
 
@@ -71,6 +75,11 @@ double goertzel(const std::vector<float>& x, double freq)
 
 bool pedalWanted(const Scenario& sc, double t)
 {
+    if (!sc.holds.empty()) {
+        for (const auto& h : sc.holds)
+            if (t >= h.first && t < h.second) return true;
+        return false;
+    }
     if (sc.taps.empty()) return t >= sc.holdFrom;
     for (double tap : sc.taps)
         if (t >= tap && t < tap + 0.1) return true;
@@ -90,6 +99,7 @@ bool run(const Scenario& sc)
     proc->setDry(0.f);   // listen to the sustain only
     proc->setWet(100.f);
     proc->setAutoCatch(sc.autoCatch);
+    proc->setLatch(sc.latch);
 
     juce::Random rng(1234);
     juce::AudioBuffer<float> buffer(2, kBlock);
@@ -127,12 +137,16 @@ bool run(const Scenario& sc)
     }
 
     bool ok = true;
-    std::printf("layers caught: %d (expected %zu)\n", maxLayersSeen, sc.notes.size());
-    if (maxLayersSeen != (int)sc.notes.size()) ok = false;
+    const int expectedLayers = sc.expectedLayers >= 0 ? sc.expectedLayers : (int)sc.notes.size();
+    std::printf("most layers at once: %d (expected %d)\n", maxLayersSeen, expectedLayers);
+    if (maxLayersSeen != expectedLayers) ok = false;
 
     // Background reference: a whole tone above the first note, which is never played.
     double reference = goertzel(measured, sc.notes[0].freq * 1.1225);
     for (const auto& n : sc.notes) {
+        bool cleared = false;
+        for (const auto& a : sc.absent) cleared |= (a.freq == n.freq && a.start == n.start);
+        if (cleared) continue;
         // The frozen pitch can sit slightly off the nominal note (e.g. caught mid-vibrato),
         // so take the strongest reading within +/-1%.
         double level = 0.0;
@@ -142,16 +156,28 @@ bool run(const Scenario& sc)
                     n.name, level / kExpectedLevel, level / (reference + 1e-9));
         if (level < 0.4 * kExpectedLevel || level > 1.6 * kExpectedLevel) ok = false;
     }
+    for (const auto& n : sc.absent) {
+        double level = 0.0;
+        for (double f = n.freq * 0.99; f <= n.freq * 1.01; f += n.freq * 0.0005)
+            level = std::max(level, goertzel(measured, f));
+        std::printf("  %-4s should be cleared: %.2fx its played level\n", n.name, level / kExpectedLevel);
+        if (level > 0.05 * kExpectedLevel) ok = false;
+    }
 
-    // Releasing the pedal should fade everything out.
+    // Piano mode: releasing the pedal fades everything out.
+    // Latch mode: releasing keeps it ringing, so tap the pedal to clear instead.
+    auto silentBlock = [&] { buffer.clear(); base->processBlock(buffer, midi); };
+    if (sc.latch) {
+        proc->setPedal(true);
+        for (int b = 0; b < 4; b++) silentBlock();
+    }
     proc->setPedal(false);
     float tailPeak = 0.f;
     for (int b = 0; b < (int)(2.5 * kSampleRate / kBlock); b++) {
-        buffer.clear();
-        base->processBlock(buffer, midi);
+        silentBlock();
         if (b * kBlock / kSampleRate > 2.0) tailPeak = std::max(tailPeak, buffer.getMagnitude(0, 0, kBlock));
     }
-    std::printf("level 2 s after release: %.6f\n", tailPeak);
+    std::printf("level 2 s after %s: %.6f\n", sc.latch ? "a clearing tap" : "release", tailPeak);
     if (tailPeak > 1e-4f) ok = false;
 
     std::printf(ok ? "PASS\n" : "FAIL\n");
@@ -197,6 +223,27 @@ int main()
         sc.notes = { { 130.81, 0.40, 0.55, "C3" }, { 164.81, 1.00, 0.55, "E3" } };
         sc.autoCatch = false;
         sc.taps = { 0.75, 1.35 };
+        scenarios.push_back(sc);
+    }
+
+    {
+        Scenario sc;
+        sc.name = "Latch: press, play C3 E3 G3, release, keeps ringing";
+        sc.notes = { { 130.81, 0.40, 0.55, "C3" }, { 164.81, 1.00, 0.55, "E3" }, { 196.00, 1.60, 0.55, "G3" } };
+        sc.latch = true;
+        sc.holds = { { 0.2, 2.25 } }; // let go right after the last note; measured from 3.0 s with the pedal up
+        scenarios.push_back(sc);
+    }
+    {
+        Scenario sc;
+        sc.name = "Latch: a new press clears the old chord and catches the new one";
+        sc.absent = { { 130.81, 0.40, 0.55, "C3" }, { 164.81, 1.00, 0.55, "E3" } };
+        sc.notes = { { 196.00, 2.40, 0.55, "G3" } };
+        for (const auto& n : sc.absent) sc.notes.insert(sc.notes.begin(), n); // play C3, E3 first
+        sc.latch = true;
+        sc.expectedLayers = 2; // C3 + E3, then just G3
+        sc.holds = { { 0.2, 1.7 }, { 2.2, 3.05 } };
+        sc.total = 6.0; sc.measureFrom = 4.5; sc.measureTo = 5.8;
         scenarios.push_back(sc);
     }
 

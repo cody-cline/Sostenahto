@@ -11,6 +11,10 @@ Changes from upstream:
   note is detected and caught as its own sustained layer once it settles, so
   tonguing C, E, G with the pedal held leaves the whole chord ringing. Turn it
   off for the original "play, then press" behaviour.
+- **Latch** (on by default): press the pedal, play your notes, let go, and
+  everything keeps ringing. The next press clears it and starts a new set (a
+  quick tap with no notes just clears). Turn it off for piano behaviour, where
+  letting go fades the sound out.
 - **Settle** parameter (0.1-1.0 s, default 0.2 s): how long after a note starts
   it waits before catching it, so the attack isn't looped.
 - **Pedal from anywhere**: MIDI sustain pedal (CC64), or the host-automatable
@@ -57,8 +61,8 @@ cmake -B build -DSOSTENAHTO_BUILD_TESTS=ON && cmake --build build --target AutoC
 ```
 
 Plays synthetic tongued, slurred, vibrato and low-register notes through the
-plugin with the pedal held and checks that each one is caught exactly once and
-sustains at its played level.
+plugin and checks that each one is caught exactly once, sustains at its played
+level, and that latch release/clear and piano release behave correctly.
 
 ## Features:
 - Infinite sustain - let your notes and chords ring out for as long as you like.

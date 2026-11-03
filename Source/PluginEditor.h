@@ -51,7 +51,8 @@ private:
         *periodDial;
 
     CustomToggleButton* forcePeriodToggle,
-        *autoCatchToggle;
+        *autoCatchToggle,
+        *latchToggle;
 
     std::unique_ptr<SliderAttachment> maxLayersAttachment,
         riseAttachment,
@@ -62,7 +63,8 @@ private:
 
     std::unique_ptr<ButtonAttachment> holdAttachment,
         forcePeriodAttachment,
-        autoCatchAttachment;
+        autoCatchAttachment,
+        latchAttachment;
 
     PedalWidget* pedalWidget;
 

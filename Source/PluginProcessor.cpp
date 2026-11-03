@@ -24,7 +24,8 @@ SustainPedalAudioProcessor::SustainPedalAudioProcessor() :
             std::make_unique<AudioParameterBool>("forcePeriod", "Force Period", true),
             std::make_unique<AudioParameterBool>("autoCatch", "Auto Catch", true),
             std::make_unique<AudioParameterFloat>("settle", "Settle", 0.1f, 1.f, 0.2f),
-            std::make_unique<AudioParameterBool>("pedal", "Pedal", false)
+            std::make_unique<AudioParameterBool>("pedal", "Pedal", false),
+            std::make_unique<AudioParameterBool>("latch", "Latch", true)
         })
 #ifndef JucePlugin_PreferredChannelConfigurations
     , AudioProcessor(BusesProperties()
@@ -49,6 +50,7 @@ SustainPedalAudioProcessor::SustainPedalAudioProcessor() :
     autoCatch = parameters.getRawParameterValue("autoCatch");
     settle = parameters.getRawParameterValue("settle");
     pedalParam = parameters.getRawParameterValue("pedal");
+    latch = parameters.getRawParameterValue("latch");
 
     licenseKey = LicenseManager::loadLicense();
 }
@@ -224,16 +226,24 @@ void SustainPedalAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiB
         if (generatedSamples[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             auto sample = generatedSamples[i].get();
             if (!sample.empty()) {
-                // If the pedal was lifted while this layer was being prepared, it starts
-                // at full volume and fades out at the Tail rate like the other layers
-                // (pressing again before it's gone brings it back).
-                const bool down = pedalDown.load();
-                auto* layer = new SustainData(sample, *rise, *tail, down ? 0.f : 1.f);
-                layer->fade(down);
+                // Latch: caught layers always fade in and keep ringing after release.
+                // Otherwise, if the pedal was lifted while this layer was being prepared,
+                // it starts at full volume and fades out at the Tail rate like the other
+                // layers (pressing again before it's gone brings it back).
+                const bool keep = pedalDown.load() || *latch > 0.5f;
+                auto* layer = new SustainData(sample, *rise, *tail, keep ? 0.f : 1.f);
+                layer->fade(keep);
                 layers.emplace_back(layer);
             }
             generatedSamples.erase(generatedSamples.begin() + i);
         }
+    }
+
+    // Layers that were cleared while still being prepared are thrown away once
+    // they finish (destroying an unfinished std::async future would block here).
+    for (size_t i = discardedSamples.size(); i-- > 0;) {
+        if (discardedSamples[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            discardedSamples.erase(discardedSamples.begin() + (long)i);
     }
 
     float wetDecimal = *wet / 100.f;
@@ -333,10 +343,28 @@ void SustainPedalAudioProcessor::setPedal(bool val) {
 }
 
 void SustainPedalAudioProcessor::handlePedalChange(bool down) {
+    const bool latched = *latch > 0.5f;
+
+    if (latched) {
+        if (down) {
+            // A new press clears the previous chord (fading out at the Tail rate)...
+            clearLayers();
+        }
+        else {
+            // ...and releasing keeps everything ringing. A note that started just
+            // before release and hasn't been caught yet gets caught now.
+            if (pendingCatchSamples >= 0 && tailIsAudible()) catchLayer();
+            pendingCatchSamples = -1;
+            return;
+        }
+    }
+
     if (down) {
         // Bring back layers that were still fading out from the last release.
-        for (auto* layer : layers) {
-            if (layer != nullptr) layer->fade(true);
+        if (!latched) {
+            for (auto* layer : layers) {
+                if (layer != nullptr) layer->fade(true);
+            }
         }
         // Catch whatever is sounding right now (the classic "play, then press" use).
         if (tailIsAudible()) {
@@ -352,6 +380,18 @@ void SustainPedalAudioProcessor::handlePedalChange(bool down) {
             if (layer != nullptr) layer->fade(false);
         }
     }
+}
+
+void SustainPedalAudioProcessor::clearLayers() {
+    for (auto* layer : layers) {
+        if (layer == nullptr) continue;
+        layer->fade(false);
+        fadingOut.push_back(layer);
+    }
+    layers.clear();
+    for (auto& pending : generatedSamples) discardedSamples.push_back(std::move(pending));
+    generatedSamples.clear();
+    pendingCatchSamples = -1;
 }
 
 bool SustainPedalAudioProcessor::tailIsAudible() const {
