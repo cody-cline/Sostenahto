@@ -5,3 +5,4 @@ Source/util/Salt.h
 Source/pffft
 JuceLibraryCode
 Builds
+build/

@@ -5,7 +5,7 @@
 class SustainData
 {
 public:
-	SustainData(std::vector<float> buffer, std::atomic<float>& rise, std::atomic<float>& tail);
+	SustainData(std::vector<float> buffer, std::atomic<float>& rise, std::atomic<float>& tail, float startVolume = 0.f);
 	SustainData(const SustainData& copy) :
 		rise(copy.rise), tail(copy.tail), buffer(copy.buffer), size(copy.size) {}
 	~SustainData() {};

@@ -10,7 +10,11 @@
 
 #pragma once
 #include <JuceHeader.h>
+#if __has_include("Salt.h")
 #include "Salt.h"
+#else
+#include "Salt.example.h"
+#endif
 
 // Include system-specific headers
 #if defined(_WIN32)

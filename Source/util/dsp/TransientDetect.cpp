@@ -25,83 +25,87 @@ void TransientDetector::setup() {
     stepSize = (1.0 - overlap) * windowSize;
     nTrackedFrames = trackingTime * sampleRate / stepSize;
 
+    // About 40 ms between onsets, so one attack only registers once or twice.
+    lockoutFrames = std::max(2, (int)(0.04 * sampleRate / stepSize));
+    magHistory.clear();
+
     windowFunction = std::vector<float>(windowSize, 0.f);
     sumFunctions = std::vector<float>(fftSize, 0.f);
     dsp::WindowingFunction<float>::fillWindowingTables(&windowFunction[0], windowSize, dsp::WindowingFunction<float>::blackmanHarris);
 }
 
-void TransientDetector::process(std::vector<float> buffer, std::vector<float>& tailBuffer) {
+bool TransientDetector::process(std::vector<float> buffer, std::vector<float>& tailBuffer) {
     for (int i = 0; i < buffer.size(); i++) {
         inputStream.push_back(buffer[i]);
     }
-    if (inputStream.size() >= windowSize) {
+    bool found = false;
+    // Process every complete analysis window (blocks larger than the hop size
+    // would otherwise make the input stream grow without bound).
+    while (inputStream.size() >= windowSize) {
         bool transient = detectTransient(std::vector<float>(inputStream.begin(), inputStream.begin() + windowSize));
-        if (transient) tailBuffer.clear();
+        if (transient) {
+            tailBuffer.clear();
+            found = true;
+        }
         inputStream.erase(inputStream.begin(), inputStream.begin() + stepSize);
     }
+    return found;
 }
 
 bool TransientDetector::detectTransient(std::vector<float> input) {
     auto fft = pffft::Fft<float>(windowSize);
     auto in = fft.valueVector();
     auto out = fft.spectrumVector();
+    double energy = 0.0;
     for (int i = 0; i < windowSize; i++) {
         in[i] = input[i] * windowFunction[i];
+        energy += (double)input[i] * input[i];
     }
     fft.forward(in, out);
 
-    std::vector<float> mags, phases;
-    for (auto cmpl : out) {
-        mags.push_back(abs(cmpl));
-    }
-    magStore.push_back(mags);
-    if (magStore.size() > 3) {
-        magStore.erase(magStore.begin());
-    }
-    if (magStore.size() != 3) return false;
-    auto processWindow = magStore[1];
-    auto backT = processWindow, frontT = processWindow;
-    for (int i = 0; i < fftSize; i++) {
-        backT[i] -= magStore[0][i];
-        frontT[i] -= magStore[2][i];
+    std::vector<float> mags(out.size());
+    for (size_t i = 0; i < out.size(); i++) {
+        mags[i] = std::abs(out[i]);
     }
 
-    // generate F values for each frequency band
-    std::vector<float> funcs;
-    float total = 0.f;
-    for (int i = 0; i < fftSize; i++) {
-        float val = 0.f;
-        for (int k = std::max(i - 9, 0); k < std::min(i + 10, fftSize); k++) {
-            val += (1 + sgn(backT[k])) * backT[k]
-                + (1 + sgn(frontT[k])) * frontT[k] * 0;
+    // Normalised positive spectral flux: how much of this frame's spectrum is
+    // "new" compared with the previous frame (0 = steady tone, 1 = all new).
+    // A steady note stays near 0 even with vibrato, while a tongued attack or a
+    // change of pitch brings in new harmonics and jumps well above the threshold.
+    //
+    // Like "SuperFlux", each bin is compared against the loudest nearby bin of
+    // an earlier frame, so small pitch wobbles (vibrato, or the spectrum of a
+    // low note flickering between frames) are not mistaken for new notes.
+    float flux = 0.f;
+    if (magHistory.size() >= (size_t)fluxLag) {
+        const auto& ref = magHistory[magHistory.size() - (size_t)fluxLag];
+        float rise = 0.f, total = 1e-9f;
+        const int n = (int)mags.size();
+        for (int i = 0; i < n; i++) {
+            float refMax = 0.f;
+            for (int k = std::max(0, i - fluxSpread); k <= std::min(n - 1, i + fluxSpread); k++)
+                refMax = std::max(refMax, ref[(size_t)k]);
+            rise += std::max(0.f, mags[(size_t)i] - refMax);
+            total += mags[(size_t)i];
         }
-        val *= 0.5f;
-        funcs.push_back(val);
-        sumFunctions[i] += val - (fftFunction.size() == 7 ? fftFunction[0][i] : 0.f);
-        total += val;
+        flux = rise / total;
     }
-    fftFunction.push_back(funcs);
-    if (fftFunction.size() > 7) {
-        fftFunction.erase(fftFunction.begin());
-    }
-    if (fftFunction.size() != 7) return false;
+    magHistory.push_back(mags);
+    if (magHistory.size() > (size_t)fluxLag) magHistory.erase(magHistory.begin());
 
-    // Dynamic thresholding
-    int flagged = 0;
-    for (int j = 0; j < fftSize; j++) {
-        float thresh = 2 * sumFunctions[j] / (2 * 3 + 1);
-        flagged += fftFunction[3][j] > thresh ? 1 : 0;
-    }
-    frameFlags.push_back((float)flagged);
-    transientFrames.push_back(flagged > fftSize / 4);
-    if (frameFlags.size() > nTrackedFrames) {
-        frameFlags.erase(frameFlags.begin());
-        transientFrames.erase(transientFrames.begin());
-    }
+    const float rms = (float)std::sqrt(energy / windowSize);
+    framesSinceOnset++;
 
-    if (!transientFrames[transientFrames.size() - 1])
-        return false;
-    
+#if JUCE_DEBUG
+    frameFlags.push_back(flux * 100.f);
+    if (frameFlags.size() > (size_t)nTrackedFrames) frameFlags.erase(frameFlags.begin());
+#endif
+
+    // Ignore near-silence (breath, room noise) and re-triggers within the lockout.
+    if (rms < onsetFloor || framesSinceOnset < lockoutFrames) return false;
+    if (flux < onsetThreshold) return false;
+
+    framesSinceOnset = 0;
     return true;
 }
 

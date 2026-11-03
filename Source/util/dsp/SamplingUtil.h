@@ -2,7 +2,7 @@
 #include <JuceHeader.h>
 #include <future>
 #include <algorithm>
-#include "../source/pffft/pffft.hpp"
+#include <pffft.hpp>
 
 struct AutoCorrelationData {
 	int period;
@@ -19,6 +19,13 @@ namespace SamplingUtil
 
 	void crossfadeSelf(std::vector<float>& buffer);
 
+	// Trims the buffer so half its length is a whole number of pitch periods,
+	// then crossfades it into a seamless loop without phase cancellation.
+	void alignedCrossfadeSelf(std::vector<float>& buffer, size_t sampleRate);
+
+	// Pitch period in samples (fractional), or 0 if none was found.
+	double estimatePeriod(const std::vector<float>& buffer, size_t sampleRate);
+
 	std::vector<float> dynamicRangeCompression(std::vector<float> buffer, int windowSize, double overlap = 2.0);
 
 	float rms(std::vector<float> buffer);
@@ -30,13 +37,13 @@ namespace SamplingUtil
 	pffft::AlignedVector<std::complex<double>> forward(
 		std::vector<float> buf,
 		size_t fftSize,
-		std::vector<double>& windowingFunction
+		const std::vector<double>& windowingFunction
 	);
 
 	pffft::AlignedVector<double> backward(
 		pffft::AlignedVector<std::complex<double>> Y,
 		size_t fftSize,
-		std::vector<double>& windowingFunction
+		const std::vector<double>& windowingFunction
 	);
 };
 

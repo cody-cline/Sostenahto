@@ -26,7 +26,7 @@ std::string getSystemId()
     utsname name;
     if (uname(&name) == -1)
         return "";
-    system_info += name.nodename + "-" + std::to_string(gethostid());
+    system_info += std::string(name.nodename) + "-" + std::to_string(gethostid());
 #elif defined(__APPLE__) && defined(__MACH__)
     std::ostringstream system_info_ss;
     char mac_address[IFNAMSIZ];

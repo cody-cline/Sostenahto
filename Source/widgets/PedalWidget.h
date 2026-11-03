@@ -53,9 +53,9 @@ public:
     void resized() override {}
 
     void mouseEnter(const MouseEvent&) override {
-        infoText.setText(std::string("The \"Pedal\" that enables the sustain. To use, play a chord/note, and then click on the pedal or press your keybind.") + 
-            "\n\nKeybind: click on the button, followed by a key, to add a keybind. Works for any keyboard input." + 
-            "\n\nHold to sustain : change whether the pedal toggles or holds the sustain. Only works for the keybind.", 
+        infoText.setText(std::string("The \"Pedal\" that enables the sustain. Hold it down and play: with Auto Catch on, every new note is layered in. Click the pedal, press your keybind, use a MIDI sustain pedal (CC64), or map the \"Pedal\" parameter in your host.") +
+            "\n\nKeybind: click on the button, followed by a key. Only works while this window has focus." +
+            "\n\nHold to sustain: whether the keybind holds or toggles the pedal.",
             dontSendNotification);
     }
 

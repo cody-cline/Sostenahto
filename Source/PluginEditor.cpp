@@ -19,13 +19,14 @@ SustainPedalAudioProcessorEditor::SustainPedalAudioProcessorEditor(SustainPedalA
     // editor's size to whatever you need it to be.
 #if JUCE_DEBUG
     setSize(1080, 680);
-    startTimer(100);
 #else
     setSize (400, 680);
 #endif
+    // Keeps the pedal picture in sync when the pedal is pressed over MIDI or by the host.
+    startTimerHz(30);
 
     addAndMakeVisible(infoLabel);
-    infoLabel.setBounds(10, 420, 180, 240);
+    infoLabel.setBounds(10, 446, 180, 214);
     infoLabel.setFont(Font(14));
     infoLabel.setColour(Label::ColourIds::backgroundColourId, Colour(0xFF404040));
     infoLabel.setJustificationType(Justification::centredLeft);
@@ -72,6 +73,12 @@ SustainPedalAudioProcessorEditor::SustainPedalAudioProcessorEditor(SustainPedalA
     forcePeriodToggle->setTopLeftPosition(46, 384);
     forcePeriodAttachment.reset(new ButtonAttachment(vts, "forcePeriod", *forcePeriodToggle));
 
+    autoCatchToggle = new CustomToggleButton("Auto Catch", infoLabel, "When enabled, keep the pedal held down and just play: every new note is caught as a sustained layer once it settles (set with the Settle parameter in your host, default 0.2s).\n\nWhen disabled, each layer is caught only when you press the pedal.");
+    addAndMakeVisible(autoCatchToggle);
+    autoCatchToggle->setClickingTogglesState(true);
+    autoCatchToggle->setTopLeftPosition(46, 412);
+    autoCatchAttachment.reset(new ButtonAttachment(vts, "autoCatch", *autoCatchToggle));
+
     ss = new DonateSplashScreen(audioProcessor);
     if (!audioProcessor.isReady()) addAndMakeVisible(ss);
 
@@ -89,6 +96,7 @@ SustainPedalAudioProcessorEditor::~SustainPedalAudioProcessorEditor()
     periodAttachment.reset();
     holdAttachment.reset();
     forcePeriodAttachment.reset();
+    autoCatchAttachment.reset();
     delete maxLayersDial;
     delete riseDial;
     delete tailDial;
@@ -97,7 +105,20 @@ SustainPedalAudioProcessorEditor::~SustainPedalAudioProcessorEditor()
     delete periodDial;
     delete pedalWidget;
     delete forcePeriodToggle;
+    delete autoCatchToggle;
     if (!audioProcessor.isReady()) delete ss;
+}
+
+void SustainPedalAudioProcessorEditor::timerCallback()
+{
+    bool down = audioProcessor.isPedalDown();
+    if (pedalWidget->pedalToggle.getToggleState() != down) {
+        pedalWidget->pedalToggle.setToggleState(down, dontSendNotification);
+        pedalWidget->repaint();
+    }
+#if JUCE_DEBUG
+    repaint();
+#endif
 }
 
 //==============================================================================

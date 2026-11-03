@@ -9,7 +9,7 @@ std::vector<float> SamplingUtil::getSample(std::vector<float> buffer, int target
 		int size = buffer.size();
 		buffer = timeScale(buffer, targetSampleLength, sampleRate, 4096);
 		if (buffer.size() != size) { // implies that we successfully stretched the sample
-			crossfadeSelf(buffer);
+			alignedCrossfadeSelf(buffer, sampleRate);
 			//buffer = dynamicRangeCompression(buffer, 4096);
 			processed = true;
 		}
@@ -24,7 +24,7 @@ std::vector<float> SamplingUtil::getSample(std::vector<float> buffer, int target
 		// autocorrelation input is padded to be compatible with FFT libraries (2^n), 
 		// hence output can show longer intervals than the original input signal length
 		// we should try to get the longest possible interval from the orignal sample as possible
-		crossfadeSelf(buffer);
+		alignedCrossfadeSelf(buffer, sampleRate);
 		//buffer = dynamicRangeCompression(buffer, acd.period * 2);
 	}
 	
@@ -87,6 +87,50 @@ std::vector<float> SamplingUtil::autocorrelate(std::vector<float> buffer) {
 	return buffer;
 }
 
+double SamplingUtil::estimatePeriod(const std::vector<float>& buffer, size_t sampleRate) {
+	// Analyse up to ~0.35 s from the middle of the sample.
+	const size_t len = std::min<size_t>(buffer.size(), (size_t)(0.35 * sampleRate));
+	if (len < 2048) return 0.0;
+	const size_t start = (buffer.size() - len) / 2;
+	std::vector<float> seg(buffer.begin() + (long)start, buffer.begin() + (long)(start + len));
+	auto ac = autocorrelate(seg);
+
+	// Search pitches from ~1500 Hz down to ~30 Hz (covers euphonium pedal tones).
+	const size_t minLag = std::max<size_t>(5, sampleRate / 1500);
+	const size_t maxLag = std::min<size_t>(ac.size() - 2, sampleRate / 30);
+	if (maxLag <= minLag || ac[0] <= 0.f) return 0.0;
+
+	// Take the first peak that is close to the strongest one; this avoids
+	// picking a multiple of the period (octave errors).
+	float best = 0.f;
+	for (size_t i = minLag; i <= maxLag; i++) best = std::max(best, ac[i]);
+	if (best < 0.3f * ac[0]) return 0.0; // not periodic enough
+	for (size_t i = minLag; i <= maxLag; i++) {
+		if (ac[i] > ac[i - 1] && ac[i] >= ac[i + 1] && ac[i] >= 0.9f * best) {
+			// Parabolic interpolation for a fractional period.
+			double a = ac[i - 1], b = ac[i], c = ac[i + 1];
+			double denom = a - 2.0 * b + c;
+			double shift = denom != 0.0 ? 0.5 * (a - c) / denom : 0.0;
+			return (double)i + std::max(-0.5, std::min(0.5, shift));
+		}
+	}
+	return 0.0;
+}
+
+void SamplingUtil::alignedCrossfadeSelf(std::vector<float>& buffer, size_t sampleRate) {
+	const double period = estimatePeriod(buffer, sampleRate);
+	if (period > 0.0) {
+		const size_t half = buffer.size() / 2;
+		const double cycles = std::floor((double)half / period);
+		if (cycles >= 1.0) {
+			const size_t alignedHalf = (size_t)std::llround(cycles * period);
+			if (alignedHalf >= 1024 && alignedHalf <= half)
+				buffer.resize(alignedHalf * 2);
+		}
+	}
+	crossfadeSelf(buffer);
+}
+
 void SamplingUtil::crossfadeSelf(std::vector<float>& buffer) {
 	if (buffer.size() < 1000) {
 		DBG("fail");
@@ -94,8 +138,10 @@ void SamplingUtil::crossfadeSelf(std::vector<float>& buffer) {
 	size_t windowSize = buffer.size();
 	// default 50% overlap
 	size_t overlapSize = windowSize / 2;
-	std::vector<float> window(windowSize, 0.f);
-	dsp::WindowingFunction<float>::fillWindowingTables(&window[0], windowSize + 1, dsp::WindowingFunction<float>::WindowingMethod::triangular, true);
+	// One extra point gives a periodic triangle, so the two overlapping copies
+	// always sum to exactly 1 (unity gain). The extra slot is never read.
+	std::vector<float> window(windowSize + 1, 0.f);
+	dsp::WindowingFunction<float>::fillWindowingTables(&window[0], windowSize + 1, dsp::WindowingFunction<float>::WindowingMethod::triangular, false);
 
 	std::vector<float> out((int)std::max((float)buffer.size(), (float)2048), 0.f);
 	for (int i = 0, j = windowSize / 2; i < windowSize; i++, j++) {
@@ -169,8 +215,9 @@ std::vector<float> SamplingUtil::timeScale(std::vector<float> buffer, int target
 	std::vector<float> out(targetLength, 0.f);
 
 	// setup constants
-	std::vector<double> windowingFunction(windowSize, 0.0);
+	std::vector<double> windowingFunction(windowSize + 1, 0.0); // +1: periodic Hann
 	dsp::WindowingFunction<double>::fillWindowingTables(&windowingFunction[0], windowSize + 1, dsp::WindowingFunction<double>::hann, false);
+	windowingFunction.resize(windowSize);
 	std::vector<double> omegas(N / 2, 0.0);
 	for (int i = 0; i < N / 2; i++) {
 		omegas[i] = MathConstants<double>::twoPi * analysisHopSize * i / N;
@@ -186,8 +233,8 @@ std::vector<float> SamplingUtil::timeScale(std::vector<float> buffer, int target
 			std::launch::async,
 			forward,
 			std::vector<float>(buffer.begin() + analysisWindowStart, buffer.begin() + analysisWindowStart + windowSize),
-			N,
-			windowingFunction
+			(size_t)N,
+			std::cref(windowingFunction)
 		));
 		analysisWindowStart += analysisHopSize;
 		frame++;
@@ -220,8 +267,8 @@ std::vector<float> SamplingUtil::timeScale(std::vector<float> buffer, int target
 			std::launch::async,
 			backward,
 			Y,
-			N,
-			windowingFunction
+			(size_t)N,
+			std::cref(windowingFunction)
 		));
 		synthWindowStart += synthesisHopSize;
 		frame++;
@@ -277,7 +324,7 @@ float SamplingUtil::principleDetermination(double input) {
 pffft::AlignedVector<std::complex<double>> SamplingUtil::forward(
 	std::vector<float> buf,
 	size_t N,
-	std::vector<double>& windowingFunction
+	const std::vector<double>& windowingFunction
 ) {
 	pffft::Fft<double> fft(N);
 	const size_t windowSize = buf.size();
@@ -301,7 +348,7 @@ pffft::AlignedVector<std::complex<double>> SamplingUtil::forward(
 pffft::AlignedVector<double> SamplingUtil::backward(
 	pffft::AlignedVector<std::complex<double>> Y,
 	size_t N,
-	std::vector<double>& windowingFunction
+	const std::vector<double>& windowingFunction
 ) {
 	pffft::Fft<double> fft(N);
 	auto Z = fft.valueVector();

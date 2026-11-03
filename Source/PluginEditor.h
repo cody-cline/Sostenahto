@@ -27,7 +27,7 @@ public:
     //==============================================================================
     void paint (juce::Graphics&) override;
     void resized() override;
-    void timerCallback() override { }//repaint(); }
+    void timerCallback() override;
 
     bool keyPressed(const KeyPress& key, Component* originatingComponent) override;
     bool keyStateChanged(bool isKeyDown, Component*) override;
@@ -50,7 +50,8 @@ private:
         *dryDial,
         *periodDial;
 
-    CustomToggleButton* forcePeriodToggle;
+    CustomToggleButton* forcePeriodToggle,
+        *autoCatchToggle;
 
     std::unique_ptr<SliderAttachment> maxLayersAttachment,
         riseAttachment,
@@ -60,7 +61,8 @@ private:
         periodAttachment;
 
     std::unique_ptr<ButtonAttachment> holdAttachment,
-        forcePeriodAttachment;
+        forcePeriodAttachment,
+        autoCatchAttachment;
 
     PedalWidget* pedalWidget;
 

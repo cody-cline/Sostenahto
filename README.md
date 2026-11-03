@@ -3,6 +3,63 @@
      
 A VST Plugin that provides infinite piano-like sustain, using transient detection, autocorrelation, a phase vocoder and more.
 
+## This fork: hold-and-play auto catch, MIDI pedal, Linux build
+
+Changes from upstream:
+
+- **Auto Catch** (on by default): hold the pedal down and just play. Every new
+  note is detected and caught as its own sustained layer once it settles, so
+  tonguing C, E, G with the pedal held leaves the whole chord ringing. Turn it
+  off for the original "play, then press" behaviour.
+- **Settle** parameter (0.1-1.0 s, default 0.2 s): how long after a note starts
+  it waits before catching it, so the attack isn't looped.
+- **Pedal from anywhere**: MIDI sustain pedal (CC64), or the host-automatable
+  **Pedal** parameter (map any MIDI CC or key to it in Carla/your DAW), as well
+  as the original keybind and on-screen pedal. Pedal handling now runs on the
+  audio thread, so presses from any source are safe and need no window focus.
+- **Sound fixes**: new onset detector (normalised spectral flux with vibrato
+  suppression) that doesn't false-trigger on steady or low notes; loops are now
+  phase-aligned to the note's pitch period, which fixes notes that sustained
+  far quieter than played; the attack is trimmed from each loop; fixed two
+  buffer overruns. Max Layers now defaults to 5.
+- **Linux/CMake build** producing VST3, LV2 and Standalone.
+
+### Building (Fedora / Nobara)
+
+```bash
+sudo dnf install cmake ninja-build gcc-c++ git alsa-lib-devel freetype-devel \
+  fontconfig-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel \
+  libXext-devel mesa-libGL-devel libcurl-devel
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # downloads JUCE and pffft
+cmake --build build
+```
+
+On Debian/Ubuntu the packages are `libasound2-dev libfreetype-dev libfontconfig1-dev
+libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl-dev
+libcurl4-openssl-dev`.
+
+Install for your user:
+
+```bash
+mkdir -p ~/.lv2 ~/.vst3
+cp -r build/Sostenahto_artefacts/Release/LV2/Sostenahto.lv2 ~/.lv2/
+cp -r build/Sostenahto_artefacts/Release/VST3/Sostenahto.vst3 ~/.vst3/
+```
+
+Then load it in Carla (or any LV2/VST3 host), open its window once and press
+Skip on the start screen to enable it.
+
+### Tests
+
+```bash
+cmake -B build -DSOSTENAHTO_BUILD_TESTS=ON && cmake --build build --target AutoCatchTest
+./build/AutoCatchTest_artefacts/Release/AutoCatchTest
+```
+
+Plays synthetic tongued, slurred, vibrato and low-register notes through the
+plugin with the pedal held and checks that each one is caught exactly once and
+sustains at its played level.
+
 ## Features:
 - Infinite sustain - let your notes and chords ring out for as long as you like.
 - Fade In/Out - adjust the speed at which the sustain fades in/out.

@@ -68,7 +68,14 @@ public:
 #endif
 
     //==============================================================================
+    // Safe to call from any thread: the audio thread picks up the change.
     void setPedal(bool val);
+    // True while the pedal is down from any source (GUI, keybind, host parameter or MIDI CC64).
+    bool isPedalDown() const { return pedalDown.load() || *pedalParam > 0.5f; }
+    int getActiveLayerCount() const { return activeLayerCount.load(); }
+
+    void setAutoCatch(bool val) { *autoCatch = val; }
+    bool getAutoCatch() { return *autoCatch > 0.5f; }
 
     void setMaxLayers(int val) { *maxLayers = (float)val; }
     int getMaxLayers() { return (int)*maxLayers; }
@@ -114,7 +121,12 @@ private:
     AudioProcessorValueTreeState parameters;
 
     //==============================================================================
-    TransientDetector* td;
+    // Audio-thread-only helpers.
+    void handlePedalChange(bool down);
+    void catchLayer();
+    bool tailIsAudible() const;
+
+    TransientDetector* td = nullptr;
 
     std::vector<float> tailSignal, sample;
     std::vector<SustainData*> layers;
@@ -122,11 +134,20 @@ private:
     std::vector<std::future<std::vector<float>>> generatedSamples;
 
     bool ready = false,
-        pedalDown = false,
         gettingPhrase = false,
         phraseFound = false;
 
-    int sr;
+    // Pedal state. pedalDown is the combined state seen by the audio thread;
+    // midiPedal comes from MIDI CC64 and is only touched on the audio thread.
+    std::atomic<bool> pedalDown{ false };
+    bool midiPedal = false;
+
+    // Auto-catch: samples elapsed since the last onset while waiting for the
+    // note to settle before catching it. -1 means nothing is pending.
+    int pendingCatchSamples = -1;
+    std::atomic<int> activeLayerCount{ 0 };
+
+    int sr = 48000;
 
     std::atomic<float>* rise,
         * tail,
@@ -136,7 +157,10 @@ private:
         * maxLayers,
         * holdToggle,
         * keycode,
-        * forcePeriod;
+        * forcePeriod,
+        * autoCatch,
+        * settle,
+        * pedalParam;
 
     std::string licenseKey = "";
 

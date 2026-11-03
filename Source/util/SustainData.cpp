@@ -1,7 +1,7 @@
 #include "SustainData.h"
 
-SustainData::SustainData(std::vector<float> buffer, std::atomic<float>& rise, std::atomic<float>& tail) :
-	buffer(buffer), rise(rise), tail(tail), size(buffer.size())
+SustainData::SustainData(std::vector<float> buffer, std::atomic<float>& rise, std::atomic<float>& tail, float startVolume) :
+	volume(startVolume), rise(rise), tail(tail), buffer(buffer), size(buffer.size())
 {}
 
 std::vector<float> SustainData::getSample(int nSamples, float wet, int samplingRate)
